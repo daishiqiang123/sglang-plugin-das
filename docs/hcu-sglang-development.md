@@ -2512,3 +2512,13 @@ DTK 26.10 / Python 3.12 无卡回归覆盖多请求 Zigzag 顺序、ragged rank�
 
 复用随 MiniMax Zigzag Prefill 默认开启。已有的 `SGLANG_MINIMAX_CACHE_PREFILL_INDEX_METADATA=0` 可关闭复用与 `repeat_interleave` 长度提示。Stage 1 异步 H2D 仍走当前 cp312 wheel。Prefill BS4 用同一份 RSC 请求同时验收 CP KV 写入、元数据复用、Stage 1 H2D、LightOp scatter/激活与 EPLB 布局命中，分段核对八个 rank 的 profile。CPU 测试覆盖跨层、跨 segment、换 batch 与关闭开关。nmz16 实际 KV 池 596,992 token。上一轮 EvalScope 保存的 20 条 GSM8K 请求复放为 19/20，错题相同且零截断。RSC BS4 每条命中 131,072 token，新增 16,384 token，输出 1。无 profile 的首轮 mean TTFT 2907.48 ms，另一次抓取 profile 的 mean TTFT 2124.80 ms。每个 rank 记录 120 次融合 scatter 和 240 次 Stage 1，CPU trace 每 rank 有 16 条 repeat_interleave 事件。两轮观察包含不同预热状态，收益归因需要同机 A/B。
 >>>>>>> origin/proj/minimax-m3.1
+
+## 2026-11-19 MiniMax 普通 Decode 的 INT8 注册、Draft TP 与索引元数据
+
+MiniMax 专用入口在量化启用时注册已有的 compressed-tensors INT8 hooks，使 INT8 DSpark 可选用 `W8A8_SUPPORT_METHODS=3`。同时选择通用 `hcu` 入口时继续由通用入口注册。
+
+普通 PD Decode 在 attention DP 下提交 DSpark Draft KV 时使用 Draft TP 组。这沿用普通 IFB 的 executor 作用域。HiSparse 的 commit 继续走其专用作用域。
+
+原生 FlashMLA 的 Decode / Target Verify 在同一次模型前向内复用请求页表、Stage 1 live-page 索引和 INT32 逐 query 长度。输入张量、KV 长度上限或 Verify 宽度变化时重建。捕获的图在每次回放仍按本步输入更新一次。TopK、KV 写入和 FlashMLA scheduler 元数据继续按层计算。TBO 和 HiSparse Verify 使用原路径。`SGLANG_MINIMAX_CACHE_DECODE_INDEX_METADATA=0` 可关闭复用。
+
+无卡回归覆盖跨层复用、换输入和换 forward、IFB 与 PD 的 Draft TP 作用域，以及 HiSparse 独立作用域。独立分支的端到端精度、图回放和收益待上机确认。此前联合候选的性能数据同时包含其他 Decode 优化。
